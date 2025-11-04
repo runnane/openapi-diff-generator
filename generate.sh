@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.0.1"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 # Auto-update function
