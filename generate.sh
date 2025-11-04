@@ -3,6 +3,68 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
+SCRIPT_VERSION="1.0.0"
+SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
+
+# Auto-update function
+check_for_updates() {
+    echo "Checking for script updates..."
+    
+    # Download the latest version to a temp file
+    TEMP_SCRIPT=$(mktemp)
+    if ! curl -s -f "$SCRIPT_URL" -o "$TEMP_SCRIPT"; then
+        echo "Warning: Could not check for updates (network error)"
+        rm -f "$TEMP_SCRIPT"
+        return
+    fi
+    
+    # Extract version from downloaded script
+    REMOTE_VERSION=$(grep '^SCRIPT_VERSION=' "$TEMP_SCRIPT" | cut -d'"' -f2)
+    
+    if [ -z "$REMOTE_VERSION" ]; then
+        echo "Warning: Could not determine remote version"
+        rm -f "$TEMP_SCRIPT"
+        return
+    fi
+    
+    echo "Current version: $SCRIPT_VERSION"
+    echo "Remote version: $REMOTE_VERSION"
+    
+    # Compare versions (simple string comparison)
+    if [ "$SCRIPT_VERSION" != "$REMOTE_VERSION" ]; then
+        echo "New version available: $REMOTE_VERSION"
+        echo -n "Update script? [y/N] "
+        read -r response
+        
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            # Backup current script
+            cp "$0" "$0.backup-$(date +%Y%m%d-%H%M%S)"
+            
+            # Replace current script with new version
+            cp "$TEMP_SCRIPT" "$0"
+            chmod +x "$0"
+            
+            echo "Script updated to version $REMOTE_VERSION"
+            echo "Backup saved. Restarting script..."
+            rm -f "$TEMP_SCRIPT"
+            
+            # Re-execute the script with same arguments
+            exec "$0" "$@"
+        else
+            echo "Update skipped"
+        fi
+    else
+        echo "Script is up to date"
+    fi
+    
+    rm -f "$TEMP_SCRIPT"
+}
+
+# Run update check unless --no-update flag is passed
+if [[ ! "$*" =~ --no-update ]]; then
+    check_for_updates "$@"
+fi
+
 # Check if endpoints.json exists
 if [ ! -f "endpoints.json" ]; then
     echo "Error: endpoints.json not found!"
@@ -121,16 +183,6 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     mv "./${id}/${id}-${DATE}.d.ts" "./${id}/${id}.d.ts"
     
 
-    # jq -r -f list-paths.jq bravoapi-v0.json > endpoints.txt
-    # jq -r -f list-operations.jq bravoapi-v0.json > operations.txt
-
-
-    # jq -r -f list-paths.jq bravoapi-v1.json >> endpoints.txt
-    # jq -r -f list-operations.jq bravoapi-v1.json >> operations.txt
-
-
-    # npx openapi-typescript ./bravoapi-v0.json -o ./bravoapi-v0.d.ts
-    # npx openapi-typescript ./bravoapi-v1.json -o ./bravoapi-v1.d.ts
 
 
   echo ""
