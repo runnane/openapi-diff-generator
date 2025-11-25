@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 # Auto-update function
@@ -164,16 +164,16 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     fi
 
     if [ -f "./${id}/${id}-swagger.json" ]; then
-        jd "./${id}/${id}-swagger.json" "./${id}/${id}-swagger-${DATE}.json" > "./${id}/${id}-swagger-${DATE}.json.jdiff"
-        if [ ! -s "./${id}/${id}-swagger-${DATE}.json.jdiff" ]; then
-            rm "./${id}/${id}-swagger-${DATE}.json.jdiff"
+        jd "./${id}/${id}-swagger.json" "./${id}/${id}-swagger-${DATE}.json" > "./${id}/${id}-swagger-${DATETIME}.json.jdiff"
+        if [ ! -s "./${id}/${id}-swagger-${DATETIME}.json.jdiff" ]; then
+            rm "./${id}/${id}-swagger-${DATETIME}.json.jdiff"
         fi
     fi
 
     if [ -f "./${id}/${id}.d.ts" ]; then
-        diff -u "./${id}/${id}.d.ts" "./${id}/${id}-${DATE}.d.ts" > "./${id}/${id}-${DATE}.d.ts.diff"
-        if [ ! -s "./${id}/${id}-${DATE}.d.ts.diff" ]; then
-            rm "./${id}/${id}-${DATE}.d.ts.diff"
+        diff -u "./${id}/${id}.d.ts" "./${id}/${id}-${DATE}.d.ts" > "./${id}/${id}-${DATETIME}.d.ts.diff"
+        if [ ! -s "./${id}/${id}-${DATETIME}.d.ts.diff" ]; then
+            rm "./${id}/${id}-${DATETIME}.d.ts.diff"
         fi
     fi
 
