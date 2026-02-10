@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.0.2"
+SCRIPT_VERSION="1.0.3"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 # Auto-update function
@@ -101,7 +101,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     # Check if the downloaded file is YAML and convert to JSON if needed
     if head -n 1 "./${id}/${id}-swagger-${DATE}.tmp" | grep -q "^openapi:\|^swagger:\|^---"; then
         echo "Detected YAML format - converting to JSON"
-        npx js-yaml "./${id}/${id}-swagger-${DATE}.tmp" > "./${id}/${id}-swagger-${DATE}.json"
+        npx js-yaml "$(pwd)/${id}/${id}-swagger-${DATE}.tmp" > "./${id}/${id}-swagger-${DATE}.json"
         rm "./${id}/${id}-swagger-${DATE}.tmp"
     else
         mv "./${id}/${id}-swagger-${DATE}.tmp" "./${id}/${id}-swagger-${DATE}.json"
