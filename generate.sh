@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.0.4"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 # Auto-update function
@@ -122,7 +122,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     fi
 
     # 2. Generate TypeScript types
-    npx openapi-typescript "./${id}/${id}-swagger-${DATE}.json" --output "./${id}/${id}-${DATE}.d.ts"
+    npx openapi-typescript "$(pwd)/${id}/${id}-swagger-${DATE}.json" --output "$(pwd)/${id}/${id}-${DATE}.d.ts"
 
     # 3. Extract paths/operations using inline jq filters
     jq -r '.paths | keys[]' "./${id}/${id}-swagger-${DATE}.json" > ./${id}/endpoints-${DATE}.txt
