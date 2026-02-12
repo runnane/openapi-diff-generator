@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.1"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 # Auto-update function
@@ -116,6 +116,13 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
         mv "./${id}/${id}-swagger-${DATE}.tmp" "./${id}/${id}-swagger-${DATE}.json"
     fi
 
+    # Convert Swagger 2.x to OpenAPI 3.x if needed
+    if jq -e '.swagger' "./${id}/${id}-swagger-${DATE}.json" > /dev/null 2>&1; then
+        echo "Detected Swagger 2.x - converting to OpenAPI 3.x"
+        npx -y swagger2openapi "$(pwd)/${id}/${id}-swagger-${DATE}.json" -o "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json"
+        mv "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json" "./${id}/${id}-swagger-${DATE}.json"
+    fi
+
     # Check if the newly downloaded file is identical to the existing non-date-tagged file
     if [ -f "./${id}/${id}-swagger.json" ]; then
         if cmp -s "./${id}/${id}-swagger.json" "./${id}/${id}-swagger-${DATE}.json"; then
@@ -128,13 +135,6 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
         fi
     else
         echo "No existing spec found - processing ${id}"
-    fi
-
-    # Convert Swagger 2.x to OpenAPI 3.x if needed
-    if jq -e '.swagger' "./${id}/${id}-swagger-${DATE}.json" > /dev/null 2>&1; then
-        echo "Detected Swagger 2.x - converting to OpenAPI 3.x"
-        npx -y swagger2openapi "$(pwd)/${id}/${id}-swagger-${DATE}.json" -o "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json"
-        mv "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json" "./${id}/${id}-swagger-${DATE}.json"
     fi
 
     # 2. Generate TypeScript types
