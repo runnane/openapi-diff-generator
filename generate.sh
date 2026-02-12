@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.0.4"
+SCRIPT_VERSION="1.1.0"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 # Auto-update function
@@ -94,9 +94,18 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     echo "ID: $id"
     echo "=================================================="
     
-    # 1. Download the OpenAPI spec
+    # 1. Download or copy the OpenAPI spec
     install -d "./${id}/"
-    curl -s "$url" -o "./${id}/${id}-swagger-${DATE}.tmp"
+    if [[ "$url" =~ ^https?:// ]]; then
+        echo "Downloading from URL..."
+        curl -s "$url" -o "./${id}/${id}-swagger-${DATE}.tmp"
+    elif [ -f "$url" ]; then
+        echo "Using local file: $url"
+        cp "$url" "./${id}/${id}-swagger-${DATE}.tmp"
+    else
+        echo "Error: URL is not a valid HTTP(S) URL and local file not found: $url"
+        continue
+    fi
     
     # Check if the downloaded file is YAML and convert to JSON if needed
     if head -n 1 "./${id}/${id}-swagger-${DATE}.tmp" | grep -q "^openapi:\|^swagger:\|^---"; then
@@ -119,6 +128,13 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
         fi
     else
         echo "No existing spec found - processing ${id}"
+    fi
+
+    # Convert Swagger 2.x to OpenAPI 3.x if needed
+    if jq -e '.swagger' "./${id}/${id}-swagger-${DATE}.json" > /dev/null 2>&1; then
+        echo "Detected Swagger 2.x - converting to OpenAPI 3.x"
+        npx -y swagger2openapi "$(pwd)/${id}/${id}-swagger-${DATE}.json" -o "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json"
+        mv "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json" "./${id}/${id}-swagger-${DATE}.json"
     fi
 
     # 2. Generate TypeScript types
