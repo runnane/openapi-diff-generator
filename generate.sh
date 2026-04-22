@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.1.1"
+SCRIPT_VERSION="1.1.2"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 # Auto-update function
@@ -121,6 +121,12 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
         echo "Detected Swagger 2.x - converting to OpenAPI 3.x"
         npx -y swagger2openapi "$(pwd)/${id}/${id}-swagger-${DATE}.json" -o "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json"
         mv "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json" "./${id}/${id}-swagger-${DATE}.json"
+    fi
+
+    # Apply per-API patches if a patch script exists
+    if [ -f "./${id}/patch.sh" ]; then
+        echo "Applying patches from ${id}/patch.sh..."
+        bash "./${id}/patch.sh" "./${id}/${id}-swagger-${DATE}.json"
     fi
 
     # Check if the newly downloaded file is identical to the existing non-date-tagged file
