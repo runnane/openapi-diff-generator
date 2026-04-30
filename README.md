@@ -38,11 +38,35 @@ To skip the auto-update check:
 - Bash
 - `curl`
 - `jq`
-- `npx`
-- `js-yaml` (used via `npx`)
-- `swagger2openapi` (used via `npx`)
-- `openapi-typescript` (used via `npx`)
+- `node` + `npx`
+- `js-yaml` (used via `npx -y`)
+- `swagger2openapi` (used via `npx -y`)
+- `openapi-typescript` (used via `npx -y`)
 - `jd` (JSON diff tool)
+
+### Install requirements
+
+Ubuntu/Debian:
+
+```
+sudo apt update && sudo apt install -y curl jq nodejs npm
+go install github.com/josephburnett/jd/v2/cmd/jd@latest
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+macOS (Homebrew):
+
+```
+brew install curl jq node
+go install github.com/josephburnett/jd/v2/cmd/jd@latest
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+Optional global install for `openapi-typescript`:
+
+```
+npm install -g openapi-typescript
+```
 
 ## Output
 For each API `id`, the script creates a folder and maintains current artifacts:

@@ -3,8 +3,48 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.1.2"
+SCRIPT_VERSION="1.1.3"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
+
+show_requirements_help() {
+    echo ""
+    echo "Requirements:"
+    echo "- curl"
+    echo "- jq"
+    echo "- node + npx"
+    echo "- jd (JSON diff tool)"
+    echo ""
+    echo "Install examples:"
+    echo "- Ubuntu/Debian:"
+    echo "  sudo apt update && sudo apt install -y curl jq nodejs npm"
+    echo "- macOS (Homebrew):"
+    echo "  brew install curl jq node"
+    echo ""
+    echo "Install jd:"
+    echo "  go install github.com/josephburnett/jd/v2/cmd/jd@latest"
+    echo '  export PATH="$(go env GOPATH)/bin:$PATH"'
+    echo ""
+    echo "Optional global install for openapi-typescript (not required when npx works):"
+    echo "  npm install -g openapi-typescript"
+    echo ""
+}
+
+check_requirements() {
+    local missing=()
+    local required_cmds=(curl jq node npx jd)
+
+    for cmd in "${required_cmds[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing+=("$cmd")
+        fi
+    done
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Error: Missing required applications: ${missing[*]}"
+        show_requirements_help
+        exit 1
+    fi
+}
 
 # Auto-update function
 check_for_updates() {
@@ -61,6 +101,8 @@ check_for_updates() {
 }
 
 # Run update check unless --no-update flag is passed
+check_requirements
+
 if [[ ! "$*" =~ --no-update ]]; then
     check_for_updates "$@"
 fi
@@ -98,22 +140,49 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     install -d "./${id}/"
     if [[ "$url" =~ ^https?:// ]]; then
         echo "Downloading from URL..."
-        curl -s "$url" -o "./${id}/${id}-swagger-${DATE}.tmp"
+        if ! curl -sSf -L "$url" -o "./${id}/${id}-swagger-${DATE}.tmp"; then
+            echo "Error: Failed to download $url - skipping ${id}"
+            rm -f "./${id}/${id}-swagger-${DATE}.tmp"
+            echo ""
+            continue
+        fi
     elif [ -f "$url" ]; then
         echo "Using local file: $url"
-        cp "$url" "./${id}/${id}-swagger-${DATE}.tmp"
+        if ! cp "$url" "./${id}/${id}-swagger-${DATE}.tmp"; then
+            echo "Error: Failed to copy local file $url - skipping ${id}"
+            rm -f "./${id}/${id}-swagger-${DATE}.tmp"
+            echo ""
+            continue
+        fi
     else
-        echo "Error: URL is not a valid HTTP(S) URL and local file not found: $url"
+        echo "Error: URL is not a valid HTTP(S) URL and local file not found: $url - skipping ${id}"
+        echo ""
         continue
     fi
-    
+
+    # Verify the downloaded/copied file exists and is non-empty
+    if [ ! -s "./${id}/${id}-swagger-${DATE}.tmp" ]; then
+        echo "Error: Downloaded/copied spec is missing or empty - skipping ${id}"
+        rm -f "./${id}/${id}-swagger-${DATE}.tmp"
+        echo ""
+        continue
+    fi
+
     # Check if the downloaded file is YAML and convert to JSON if needed
     if head -n 1 "./${id}/${id}-swagger-${DATE}.tmp" | grep -q "^openapi:\|^swagger:\|^---"; then
         echo "Detected YAML format - converting to JSON"
-        npx js-yaml "$(pwd)/${id}/${id}-swagger-${DATE}.tmp" > "./${id}/${id}-swagger-${DATE}.json"
+        npx -y js-yaml "$(pwd)/${id}/${id}-swagger-${DATE}.tmp" > "./${id}/${id}-swagger-${DATE}.json"
         rm "./${id}/${id}-swagger-${DATE}.tmp"
     else
         mv "./${id}/${id}-swagger-${DATE}.tmp" "./${id}/${id}-swagger-${DATE}.json"
+    fi
+
+    # Validate that we have a parseable JSON spec before continuing
+    if [ ! -s "./${id}/${id}-swagger-${DATE}.json" ] || ! jq empty "./${id}/${id}-swagger-${DATE}.json" >/dev/null 2>&1; then
+        echo "Error: Spec for ${id} is missing, empty, or not valid JSON - skipping"
+        rm -f "./${id}/${id}-swagger-${DATE}.json" "./${id}/${id}-swagger-${DATE}.tmp"
+        echo ""
+        continue
     fi
 
     # Convert Swagger 2.x to OpenAPI 3.x if needed
@@ -144,7 +213,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     fi
 
     # 2. Generate TypeScript types
-    npx openapi-typescript "$(pwd)/${id}/${id}-swagger-${DATE}.json" --output "$(pwd)/${id}/${id}-${DATE}.d.ts"
+    npx -y openapi-typescript "$(pwd)/${id}/${id}-swagger-${DATE}.json" --output "$(pwd)/${id}/${id}-${DATE}.d.ts"
 
     # 3. Extract paths/operations using inline jq filters
     jq -r '.paths | keys[]' "./${id}/${id}-swagger-${DATE}.json" > ./${id}/endpoints-${DATE}.txt
