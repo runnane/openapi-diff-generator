@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.1.3"
+SCRIPT_VERSION="1.1.4"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 show_requirements_help() {
@@ -140,7 +140,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     install -d "./${id}/"
     if [[ "$url" =~ ^https?:// ]]; then
         echo "Downloading from URL..."
-        if ! curl -sSf -L "$url" -o "./${id}/${id}-swagger-${DATE}.tmp"; then
+        if ! curl -sSf -L --connect-timeout 10 "$url" -o "./${id}/${id}-swagger-${DATE}.tmp"; then
             echo "Error: Failed to download $url - skipping ${id}"
             rm -f "./${id}/${id}-swagger-${DATE}.tmp"
             echo ""
