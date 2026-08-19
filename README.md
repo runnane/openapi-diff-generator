@@ -34,6 +34,54 @@ To skip the auto-update check:
 ./generate.sh --no-update
 ```
 
+## Authenticated specs
+
+Some OpenAPI documents are served from behind authentication. `endpoints.json` is
+meant to be committed, so the credential cannot live in it. Instead, `url` and an
+optional `headers` object may reference `${VAR}`, resolved at run time:
+
+```
+[
+	{
+		"name": "Example API",
+		"url": "${EXAMPLE_API_URL}/openapi.json",
+		"id": "example-api",
+		"headers": {
+			"Authorization": "Bearer ${EXAMPLE_API_TOKEN}"
+		}
+	}
+]
+```
+
+Values come from a dotenv file. Lookup order, first hit wins:
+
+| Source | Notes |
+| --- | --- |
+| `$OPENAPI_ENV_FILE` | Explicit override |
+| `./.env` | Next to `endpoints.json` |
+| `../.env` | Parent directory, for a package-local `.env` |
+
+```
+OPENAPI_ENV_FILE=../secrets/.env ./generate.sh --no-update
+```
+
+Notes:
+
+- **Headers are passed to `curl` on stdin** (`-K -`), never on the command line,
+  so a token does not appear in `ps` output on a shared machine.
+- **Only header names are logged**, never their values, and the `url` is logged
+  as the unexpanded template — a url may itself carry a token, and this output
+  often ends up in a CI log.
+- **A missing variable fails that endpoint up front**, naming what is unset,
+  instead of sending an empty header and reporting whatever the API says about
+  it. Other endpoints still run.
+- **The dotenv file is parsed, not sourced.** A dotenv file is data; sourcing it
+  would execute whatever a stray `$(...)` in a secret happened to look like.
+  Inline `# comments` are not stripped, because `#` is legal in a secret —
+  quote any value that contains one.
+- Endpoints with no `${VAR}` and no `headers` behave exactly as before; no
+  `.env` is required.
+
 ## Requirements
 - Bash
 - `curl`
@@ -67,6 +115,14 @@ Optional global install for `openapi-typescript`:
 ```
 npm install -g openapi-typescript
 ```
+
+## Behaviour on failure
+
+If `openapi-typescript` fails, the endpoint is skipped and the checked-in files
+are left untouched. Previously the script carried on, moved the freshly
+downloaded spec into place next to the **stale** `.d.ts`, and then reported
+`All APIs processed!` — leaving the artifacts inconsistent while claiming
+success.
 
 ## Output
 For each API `id`, the script creates a folder and maintains current artifacts:
