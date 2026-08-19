@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.3.0"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 show_requirements_help() {
@@ -206,6 +206,74 @@ fetch_spec() {
     endpoint_curl_config "$endpoint" | curl -sSf -L --connect-timeout 10 -K - "$url" -o "$out"
 }
 
+# ---------------------------------------------------------------------------
+# openapi-typescript toolchain
+#
+# `npx` resolves a project-local install before downloading one, so the types
+# this script generates depend on whatever version the CALLER happens to have
+# linked -- and on the `typescript` that install was resolved against, because
+# openapi-typescript 7.x drives the TypeScript compiler API and peers on
+# `typescript@^5.x`.
+#
+# In a workspace whose compiler is typescript@7 native there is no `ts.factory`,
+# so the linked binary dies on import before it reads the spec:
+#
+#   TypeError: Cannot read properties of undefined (reading 'createKeywordTypeNode')
+#
+# Pinning versions on the command line does not help on its own: npx walks UP
+# from the working directory and still finds the workspace copy. Escaping that
+# means running from a cwd outside the caller's tree.
+#
+# OPENAPI_TS_ISOLATED:
+#   auto  (default) Use whatever npx resolves. If that fails, retry ONCE pinned
+#                   and isolated, so a broken or incompatible local install
+#                   self-heals instead of blocking the run. No behaviour change
+#                   for anyone whose toolchain already works.
+#   1               Always run pinned and isolated. Reproducible output that does
+#                   not depend on the caller's node_modules.
+#   0               Never isolate. Fail as the local install fails.
+# ---------------------------------------------------------------------------
+OPENAPI_TS_ISOLATED="${OPENAPI_TS_ISOLATED:-auto}"
+OPENAPI_TS_VERSION="${OPENAPI_TS_VERSION:-7.13.0}"
+OPENAPI_TS_TYPESCRIPT="${OPENAPI_TS_TYPESCRIPT:-5.9.3}"
+
+# Both paths are absolute by the time they reach here, so changing directory is
+# safe -- and is the whole point, since it is what stops npx resolving the
+# caller's copy.
+run_openapi_typescript_isolated() {
+    local spec="$1" out="$2" scratch status
+    scratch=$(mktemp -d)
+    (
+        cd "$scratch" || exit 1
+        npx -y -p "typescript@${OPENAPI_TS_TYPESCRIPT}" \
+            -p "openapi-typescript@${OPENAPI_TS_VERSION}" \
+            openapi-typescript "$spec" --output "$out"
+    )
+    status=$?
+    rm -rf "$scratch"
+    return $status
+}
+
+run_openapi_typescript() {
+    local spec="$1" out="$2"
+
+    if [ "$OPENAPI_TS_ISOLATED" = "1" ]; then
+        run_openapi_typescript_isolated "$spec" "$out"
+        return $?
+    fi
+
+    if npx -y openapi-typescript "$spec" --output "$out"; then
+        return 0
+    fi
+
+    if [ "$OPENAPI_TS_ISOLATED" = "0" ]; then
+        return 1
+    fi
+
+    echo "openapi-typescript failed - retrying with openapi-typescript@${OPENAPI_TS_VERSION} + typescript@${OPENAPI_TS_TYPESCRIPT} in an isolated directory..."
+    run_openapi_typescript_isolated "$spec" "$out"
+}
+
 # Run update check unless --no-update flag is passed
 check_requirements
 
@@ -350,7 +418,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     # Guarded: an unguarded failure here still moved the freshly downloaded
     # spec into place next to the STALE .d.ts below, and then reported
     # "All APIs processed!" over the top of it.
-    if ! npx -y openapi-typescript "$(pwd)/${id}/${id}-swagger-${DATE}.json" --output "$(pwd)/${id}/${id}-${DATE}.d.ts"; then
+    if ! run_openapi_typescript "$(pwd)/${id}/${id}-swagger-${DATE}.json" "$(pwd)/${id}/${id}-${DATE}.d.ts"; then
         echo "Error: openapi-typescript failed for ${id} - leaving the existing files untouched"
         rm -f "./${id}/${id}-swagger-${DATE}.json"
         echo ""
