@@ -34,6 +34,10 @@ To skip the auto-update check:
 ./generate.sh --no-update
 ```
 
+The update check only ever offers a **newer** `SCRIPT_VERSION` than the running
+copy (compared with `sort -V`). A copy that is ahead of `main` is told so and is
+never offered a downgrade.
+
 ## Authenticated specs
 
 Some OpenAPI documents are served from behind authentication. `endpoints.json` is
@@ -151,13 +155,37 @@ Versions used for the isolated run:
 OPENAPI_TS_ISOLATED=1 OPENAPI_TS_VERSION=7.9.1 ./generate.sh --no-update
 ```
 
+## YAML and Swagger 2 conversions
+
+The same `npx` trap applies to the format conversions, and worse: inside a pnpm
+workspace that carries `js-yaml` or `swagger2openapi` only as a transitive
+dependency, `npx` decides the package is installed and runs a bin pnpm never
+linked (`sh: 1: js-yaml: not found`). Both conversions are deterministic, so
+there is no local install worth preferring — they **always** run pinned, from an
+isolated directory:
+
+| Variable | Default |
+| --- | --- |
+| `JS_YAML_VERSION` | `4.3.2` |
+| `SWAGGER2OPENAPI_VERSION` | `7.0.8` |
+
 ## Behaviour on failure
 
-If `openapi-typescript` fails, the endpoint is skipped and the checked-in files
-are left untouched. Previously the script carried on, moved the freshly
-downloaded spec into place next to the **stale** `.d.ts`, and then reported
+If any step fails for an endpoint — a missing variable, a failed download, an
+empty or invalid spec, a failed YAML or Swagger 2 conversion, or a failed
+`openapi-typescript` run — that endpoint is skipped and its checked-in files are
+left untouched. Previously the script could carry on, move the freshly
+downloaded spec into place next to the **stale** `.d.ts`, and report
 `All APIs processed!` — leaving the artifacts inconsistent while claiming
 success.
+
+A run that skipped any endpoint now ends with
+
+```
+Failed: <n> API(s) skipped on an error: <ids>
+```
+
+and **exits 1**, so a caller can tell a skip from "no changes".
 
 ## Output
 For each API `id`, the script creates a folder and maintains current artifacts:
