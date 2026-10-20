@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.3.0"
+SCRIPT_VERSION="1.6.0"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 show_requirements_help() {
@@ -46,6 +46,11 @@ check_requirements() {
     fi
 }
 
+# True when version $1 is strictly higher than version $2 (sort -V ordering).
+version_gt() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+}
+
 # Auto-update function
 check_for_updates() {
     echo "Checking for script updates..."
@@ -70,8 +75,10 @@ check_for_updates() {
     echo "Current version: $SCRIPT_VERSION"
     echo "Remote version: $REMOTE_VERSION"
 
-    # Compare versions (simple string comparison)
-    if [ "$SCRIPT_VERSION" != "$REMOTE_VERSION" ]; then
+    # Only ever offer a NEWER version. A plain inequality offered whatever the
+    # remote held, so a copy that was ahead of it was offered a downgrade, and
+    # answering `y` silently reverted its fixes.
+    if version_gt "$REMOTE_VERSION" "$SCRIPT_VERSION"; then
         echo "New version available: $REMOTE_VERSION"
         echo -n "Update script? [y/N] "
         read -r response
@@ -93,6 +100,8 @@ check_for_updates() {
         else
             echo "Update skipped"
         fi
+    elif [ "$SCRIPT_VERSION" != "$REMOTE_VERSION" ]; then
+        echo "Local version $SCRIPT_VERSION is newer than remote $REMOTE_VERSION - not offering a downgrade"
     else
         echo "Script is up to date"
     fi
@@ -274,6 +283,56 @@ run_openapi_typescript() {
     run_openapi_typescript_isolated "$spec" "$out"
 }
 
+# ---------------------------------------------------------------------------
+# YAML -> JSON
+#
+# The same npx trap as above, worse. In a pnpm workspace that has js-yaml as a
+# transitive dependency, npx sees it in the tree, decides it is installed, and
+# runs a bin that pnpm never linked:
+#
+#   sh: 1: js-yaml: not found
+#
+# A pinned `-p js-yaml@x` fails the same way from inside the tree; only a cwd
+# outside it escapes. The conversion is deterministic, so unlike
+# openapi-typescript there is no local install worth preferring: always run
+# pinned and isolated.
+# ---------------------------------------------------------------------------
+JS_YAML_VERSION="${JS_YAML_VERSION:-4.3.2}"
+
+convert_yaml_to_json() {
+    local in="$1" out="$2" scratch status
+    scratch=$(mktemp -d)
+    (
+        cd "$scratch" || exit 1
+        npx -y -p "js-yaml@${JS_YAML_VERSION}" js-yaml "$in" > "$out"
+    )
+    status=$?
+    rm -rf "$scratch"
+    return $status
+}
+
+# ---------------------------------------------------------------------------
+# Swagger 2.x -> OpenAPI 3.x
+#
+# The same npx trap again: a workspace that carries swagger2openapi only as a
+# transitive dependency would resolve that copy and run a bin pnpm never
+# linked. Deterministic like the YAML step, so it too always runs pinned and
+# isolated.
+# ---------------------------------------------------------------------------
+SWAGGER2OPENAPI_VERSION="${SWAGGER2OPENAPI_VERSION:-7.0.8}"
+
+convert_swagger2_to_oas3() {
+    local in="$1" out="$2" scratch status
+    scratch=$(mktemp -d)
+    (
+        cd "$scratch" || exit 1
+        npx -y -p "swagger2openapi@${SWAGGER2OPENAPI_VERSION}" swagger2openapi "$in" -o "$out"
+    )
+    status=$?
+    rm -rf "$scratch"
+    return $status
+}
+
 # Run update check unless --no-update flag is passed
 check_requirements
 
@@ -311,8 +370,14 @@ fi
 DATE=$(date +%Y-%m-%d)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 
-# Read endpoints from JSON file and loop through each
-jq -c '.[]' endpoints.json | while read -r endpoint; do
+# Endpoints that were skipped on an error. A skipped spec is a failed run, not
+# a quiet one: the script used to print "All APIs processed!" over it and exit
+# 0, so a caller could not tell a skip from "no changes".
+FAILED_IDS=()
+
+# Read endpoints from JSON file and loop through each. Process substitution,
+# not a pipe: the loop must run in this shell for FAILED_IDS to survive it.
+while read -r endpoint; do
     name=$(echo "$endpoint" | jq -r '.name')
     url_template=$(echo "$endpoint" | jq -r '.url')
     id=$(echo "$endpoint" | jq -r '.id')
@@ -326,6 +391,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     echo "=================================================="
 
     if ! check_required_vars "$endpoint"; then
+        FAILED_IDS+=("$id")
         echo ""
         continue
     fi
@@ -344,6 +410,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
         if ! fetch_spec "$endpoint" "$url" "./${id}/${id}-swagger-${DATE}.tmp"; then
             echo "Error: Failed to download $url_template - skipping ${id}"
             rm -f "./${id}/${id}-swagger-${DATE}.tmp"
+            FAILED_IDS+=("$id")
             echo ""
             continue
         fi
@@ -352,11 +419,13 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
         if ! cp "$url" "./${id}/${id}-swagger-${DATE}.tmp"; then
             echo "Error: Failed to copy local file $url - skipping ${id}"
             rm -f "./${id}/${id}-swagger-${DATE}.tmp"
+            FAILED_IDS+=("$id")
             echo ""
             continue
         fi
     else
         echo "Error: URL is not a valid HTTP(S) URL and local file not found: $url_template - skipping ${id}"
+        FAILED_IDS+=("$id")
         echo ""
         continue
     fi
@@ -365,6 +434,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     if [ ! -s "./${id}/${id}-swagger-${DATE}.tmp" ]; then
         echo "Error: Downloaded/copied spec is missing or empty - skipping ${id}"
         rm -f "./${id}/${id}-swagger-${DATE}.tmp"
+        FAILED_IDS+=("$id")
         echo ""
         continue
     fi
@@ -372,7 +442,13 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     # Check if the downloaded file is YAML and convert to JSON if needed
     if head -n 1 "./${id}/${id}-swagger-${DATE}.tmp" | grep -q "^openapi:\|^swagger:\|^---"; then
         echo "Detected YAML format - converting to JSON"
-        npx -y js-yaml "$(pwd)/${id}/${id}-swagger-${DATE}.tmp" > "./${id}/${id}-swagger-${DATE}.json"
+        if ! convert_yaml_to_json "$(pwd)/${id}/${id}-swagger-${DATE}.tmp" "$(pwd)/${id}/${id}-swagger-${DATE}.json"; then
+            echo "Error: YAML to JSON conversion (js-yaml@${JS_YAML_VERSION}) failed for ${id} - skipping"
+            rm -f "./${id}/${id}-swagger-${DATE}.json" "./${id}/${id}-swagger-${DATE}.tmp"
+            FAILED_IDS+=("$id")
+            echo ""
+            continue
+        fi
         rm "./${id}/${id}-swagger-${DATE}.tmp"
     else
         mv "./${id}/${id}-swagger-${DATE}.tmp" "./${id}/${id}-swagger-${DATE}.json"
@@ -382,6 +458,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     if [ ! -s "./${id}/${id}-swagger-${DATE}.json" ] || ! jq empty "./${id}/${id}-swagger-${DATE}.json" >/dev/null 2>&1; then
         echo "Error: Spec for ${id} is missing, empty, or not valid JSON - skipping"
         rm -f "./${id}/${id}-swagger-${DATE}.json" "./${id}/${id}-swagger-${DATE}.tmp"
+        FAILED_IDS+=("$id")
         echo ""
         continue
     fi
@@ -389,8 +466,14 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     # Convert Swagger 2.x to OpenAPI 3.x if needed
     if jq -e '.swagger' "./${id}/${id}-swagger-${DATE}.json" > /dev/null 2>&1; then
         echo "Detected Swagger 2.x - converting to OpenAPI 3.x"
-        npx -y swagger2openapi "$(pwd)/${id}/${id}-swagger-${DATE}.json" -o "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json"
-        mv "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json" "./${id}/${id}-swagger-${DATE}.json"
+        if ! convert_swagger2_to_oas3 "$(pwd)/${id}/${id}-swagger-${DATE}.json" "$(pwd)/${id}/${id}-swagger-${DATE}.oas3.json" \
+            || ! mv "./${id}/${id}-swagger-${DATE}.oas3.json" "./${id}/${id}-swagger-${DATE}.json"; then
+            echo "Error: Swagger 2 to OpenAPI 3 conversion (swagger2openapi@${SWAGGER2OPENAPI_VERSION}) failed for ${id} - skipping"
+            rm -f "./${id}/${id}-swagger-${DATE}.oas3.json" "./${id}/${id}-swagger-${DATE}.json"
+            FAILED_IDS+=("$id")
+            echo ""
+            continue
+        fi
     fi
 
     # Apply per-API patches if a patch script exists
@@ -421,6 +504,7 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
     if ! run_openapi_typescript "$(pwd)/${id}/${id}-swagger-${DATE}.json" "$(pwd)/${id}/${id}-${DATE}.d.ts"; then
         echo "Error: openapi-typescript failed for ${id} - leaving the existing files untouched"
         rm -f "./${id}/${id}-swagger-${DATE}.json"
+        FAILED_IDS+=("$id")
         echo ""
         continue
     fi
@@ -487,7 +571,13 @@ jq -c '.[]' endpoints.json | while read -r endpoint; do
 
 
   echo ""
-done
+done < <(jq -c '.[]' endpoints.json)
+
+if [ ${#FAILED_IDS[@]} -gt 0 ]; then
+    echo "Failed: ${#FAILED_IDS[@]} API(s) skipped on an error: ${FAILED_IDS[*]}"
+    echo "Their existing files were left untouched. See the errors above."
+    exit 1
+fi
 
 echo "All APIs processed!"
 
