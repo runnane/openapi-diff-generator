@@ -169,11 +169,38 @@ isolated directory:
 | `JS_YAML_VERSION` | `4.3.2` |
 | `SWAGGER2OPENAPI_VERSION` | `7.0.8` |
 
+## What counts as a change
+
+Some APIs serve the same document in a different order on every request. Vainu
+(drf-spectacular), measured across six downloads on 2026-11-15, moved the
+members of an enum, that enum's description bullets, and the key order of
+fourteen schemas' `properties`. A byte compare reported each run as drift.
+
+So the "did it change" check and the spec diff (`.jdiff`) compare a canonical
+copy of the new spec against a canonical copy of the baseline, in which:
+
+- every object's keys are sorted (`jq -S`),
+- every `enum` whose members are all scalars is sorted, and
+- a description made only of `` * `CODE` - label `` bullets, one per enum member
+  and naming exactly that enum's members, is put in the same order.
+
+None of these carries meaning in JSON, OpenAPI or JSON Schema. An enum holding
+an object or an array is left as served, and so is an enum with an `x-enum*`
+sibling (`x-enum-varnames`, `x-enumNames`, …), because those arrays pair with
+the enum by position: sorting one alone would hide a remapped value. No other
+array moves, so adding or removing an enum member, a property, or a label is
+still reported.
+
+The canonical copies are temporary. What the script **writes** — the baseline
+spec, the `.d.ts`, the endpoint and operation lists — still comes from the spec
+as downloaded, so upgrading changes no committed file by itself. The `.jdiff`
+header names the temporary `*.canonical.json` files it compared.
+
 ## Behaviour on failure
 
 If any step fails for an endpoint — a missing variable, a failed download, an
-empty or invalid spec, a failed YAML or Swagger 2 conversion, or a failed
-`openapi-typescript` run — that endpoint is skipped and its checked-in files are
+empty or invalid spec, a failed YAML or Swagger 2 conversion, a failed
+canonical copy, or a failed `openapi-typescript` run — that endpoint is skipped and its checked-in files are
 left untouched. Previously the script could carry on, move the freshly
 downloaded spec into place next to the **stale** `.d.ts`, and report
 `All APIs processed!` — leaving the artifacts inconsistent while claiming
@@ -197,5 +224,6 @@ For each API `id`, the script creates a folder and maintains current artifacts:
 When changes are detected, it also writes timestamped diffs:
 - `endpoints-diff-<timestamp>.txt`
 - `operations-diff-<timestamp>.txt`
-- `id-swagger-<timestamp>.json.jdiff`
+- `id-swagger-<timestamp>.json.jdiff` (between the canonical copies — see
+  [What counts as a change](#what-counts-as-a-change))
 - `id-<timestamp>.d.ts.diff`
