@@ -185,8 +185,11 @@ copy of the new spec against a canonical copy of the baseline, in which:
   and naming exactly that enum's members, is put in the same order.
 
 None of these carries meaning in JSON, OpenAPI or JSON Schema. An enum holding
-an object or an array is left as served, and no other array moves, so adding
-or removing an enum member, a property, or a label is still reported.
+an object or an array is left as served, and so is an enum with an `x-enum*`
+sibling (`x-enum-varnames`, `x-enumNames`, …), because those arrays pair with
+the enum by position: sorting one alone would hide a remapped value. No other
+array moves, so adding or removing an enum member, a property, or a label is
+still reported.
 
 The canonical copies are temporary. What the script **writes** — the baseline
 spec, the `.d.ts`, the endpoint and operation lists — still comes from the spec

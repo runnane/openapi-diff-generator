@@ -346,8 +346,10 @@ convert_swagger2_to_oas3() {
 #   - every `enum` array whose members are all scalars is sorted, and
 #   - a description made only of "* `CODE` - label" bullets, one per enum
 #     member and naming exactly the enum's members, is put in the same order.
-# An enum holding an object or an array is left as served, and no other array
-# moves. The stored baseline, the generated types and the endpoint and
+# An enum holding an object or an array is left as served, and so is an enum
+# with an `x-enum*` sibling (x-enum-varnames, x-enumNames, ...): those arrays
+# pair with the enum by position, so sorting one without the other would hide
+# a remapped value. No other array moves. The stored baseline, the generated types and the endpoint and
 # operation lists still come from the spec as downloaded, so the canonical copy
 # changes what counts as a change, never what is written.
 # ---------------------------------------------------------------------------
@@ -358,7 +360,8 @@ def canon_walk(f):
   else f end;
 def bullet_code: capture("^\\* `(?<c>[^`]*)` - ").c;
 def scalar_enum: (.enum | type) == "array"
-  and all(.enum[]; type != "object" and type != "array");
+  and all(.enum[]; type != "object" and type != "array")
+  and (keys | any(startswith("x-enum")) | not);
 canon_walk(
   if type == "object" and scalar_enum then
     .enum |= sort
