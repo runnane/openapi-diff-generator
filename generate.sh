@@ -3,7 +3,7 @@
 # Generate endpoint and operation specs from multiple API endpoints
 # Reads API configuration from endpoints.json file
 
-SCRIPT_VERSION="1.6.0"
+SCRIPT_VERSION="1.7.0"
 SCRIPT_URL="https://raw.githubusercontent.com/runnane/openapi-diff-generator/refs/heads/main/generate.sh"
 
 show_requirements_help() {
@@ -333,6 +333,52 @@ convert_swagger2_to_oas3() {
     return $status
 }
 
+# ---------------------------------------------------------------------------
+# Canonical form for the drift compare
+#
+# Some APIs serve the same document in a different order on every request.
+# Vainu (drf-spectacular), measured on 2026-11-15 across six downloads, moved
+# the members of one enum, its description bullets, and the key order of
+# fourteen schemas' `properties`. A byte compare reported each of those as
+# drift. None of them carries meaning in JSON, OpenAPI or JSON Schema, so the
+# "did it change" compare and the spec diff (jd) run on a copy where:
+#   - every object's keys are sorted (jq -S),
+#   - every `enum` array whose members are all scalars is sorted, and
+#   - a description made only of "* `CODE` - label" bullets, one per enum
+#     member and naming exactly the enum's members, is put in the same order.
+# An enum holding an object or an array is left as served, and no other array
+# moves. The stored baseline, the generated types and the endpoint and
+# operation lists still come from the spec as downloaded, so the canonical copy
+# changes what counts as a change, never what is written.
+# ---------------------------------------------------------------------------
+CANONICAL_SPEC_JQ='
+def canon_walk(f):
+  if type == "object" then map_values(canon_walk(f)) | f
+  elif type == "array" then map(canon_walk(f)) | f
+  else f end;
+def bullet_code: capture("^\\* `(?<c>[^`]*)` - ").c;
+def scalar_enum: (.enum | type) == "array"
+  and all(.enum[]; type != "object" and type != "array");
+canon_walk(
+  if type == "object" and scalar_enum then
+    .enum |= sort
+    | (.enum | map(tostring)) as $order
+    | if (.description | type) == "string" then
+        (.description | split("\n")) as $lines
+        | if ($lines | length) == ($order | length)
+             and all($lines[]; test("^\\* `[^`]*` - "))
+             and (($lines | map(bullet_code) | sort) == ($order | sort))
+          then .description = ($lines | sort_by(bullet_code as $c | $order | index($c)) | join("\n"))
+          else . end
+      else . end
+  else . end
+)'
+
+canonicalize_spec() {
+    local in="$1" out="$2"
+    jq -S "$CANONICAL_SPEC_JQ" "$in" > "$out"
+}
+
 # Run update check unless --no-update flag is passed
 check_requirements
 
@@ -482,11 +528,25 @@ while read -r endpoint; do
         bash "./${id}/patch.sh" "./${id}/${id}-swagger-${DATE}.json"
     fi
 
+    # Canonical copies of the new spec and the baseline (see canonicalize_spec):
+    # the compare and the spec diff run on these, so a document served in a
+    # new order is not reported as a change.
+    CANON_NEW="./${id}/${id}-swagger-${DATE}.canonical.json"
+    CANON_OLD="./${id}/${id}-swagger-${DATE}.baseline.canonical.json"
+    if ! canonicalize_spec "./${id}/${id}-swagger-${DATE}.json" "$CANON_NEW" \
+        || { [ -f "./${id}/${id}-swagger.json" ] && ! canonicalize_spec "./${id}/${id}-swagger.json" "$CANON_OLD"; }; then
+        echo "Error: could not build the canonical form of the spec for ${id} - skipping"
+        rm -f "./${id}/${id}-swagger-${DATE}.json" "$CANON_NEW" "$CANON_OLD"
+        FAILED_IDS+=("$id")
+        echo ""
+        continue
+    fi
+
     # Check if the newly downloaded file is identical to the existing non-date-tagged file
     if [ -f "./${id}/${id}-swagger.json" ]; then
-        if cmp -s "./${id}/${id}-swagger.json" "./${id}/${id}-swagger-${DATE}.json"; then
+        if cmp -s "$CANON_OLD" "$CANON_NEW"; then
             echo "No changes detected in OpenAPI spec - skipping processing for ${id}"
-            rm "./${id}/${id}-swagger-${DATE}.json"
+            rm "./${id}/${id}-swagger-${DATE}.json" "$CANON_NEW" "$CANON_OLD"
             echo ""
             continue
         else
@@ -503,7 +563,7 @@ while read -r endpoint; do
     # "All APIs processed!" over the top of it.
     if ! run_openapi_typescript "$(pwd)/${id}/${id}-swagger-${DATE}.json" "$(pwd)/${id}/${id}-${DATE}.d.ts"; then
         echo "Error: openapi-typescript failed for ${id} - leaving the existing files untouched"
-        rm -f "./${id}/${id}-swagger-${DATE}.json"
+        rm -f "./${id}/${id}-swagger-${DATE}.json" "$CANON_NEW" "$CANON_OLD"
         FAILED_IDS+=("$id")
         echo ""
         continue
@@ -549,7 +609,7 @@ while read -r endpoint; do
     fi
 
     if [ -f "./${id}/${id}-swagger.json" ]; then
-        jd "./${id}/${id}-swagger.json" "./${id}/${id}-swagger-${DATE}.json" > "./${id}/${id}-swagger-${DATETIME}.json.jdiff"
+        jd "$CANON_OLD" "$CANON_NEW" > "./${id}/${id}-swagger-${DATETIME}.json.jdiff"
         if [ ! -s "./${id}/${id}-swagger-${DATETIME}.json.jdiff" ]; then
             rm "./${id}/${id}-swagger-${DATETIME}.json.jdiff"
         fi
@@ -566,6 +626,7 @@ while read -r endpoint; do
     mv "./${id}/operations-${DATE}.txt" "./${id}/operations.txt"
     mv "./${id}/${id}-swagger-${DATE}.json" "./${id}/${id}-swagger.json"
     mv "./${id}/${id}-${DATE}.d.ts" "./${id}/${id}.d.ts"
+    rm -f "$CANON_NEW" "$CANON_OLD"
 
 
 
